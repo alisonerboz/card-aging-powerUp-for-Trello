@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Card Age Badge — Settings</title>
+  <script src="https://p.trellocdn.com/power-up.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 12px 12px 16px;
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      color: #172b4d;
+      background: #fff;
+    }
+    h3 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: #5e6c84;
+      margin: 20px 0 8px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #dfe1e6;
+    }
+    h3:first-of-type { margin-top: 0; }
+    label { display: block; margin-bottom: 4px; font-weight: 600; }
+    input[type=number], select {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 7px 8px;
+      margin-bottom: 10px;
+      border: 2px solid #dfe1e6;
+      border-radius: 3px;
+      font-size: 14px;
+      font-family: inherit;
+      background: #fff;
+      color: inherit;
+    }
+    input:focus, select:focus { outline: none; border-color: #0079bf; }
+    .row { display: flex; gap: 8px; }
+    .row > div { flex: 1; }
+    .hint { color: #5e6c84; font-size: 12px; margin: -6px 0 10px; line-height: 1.4; }
+    .check { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .check input { margin: 0; flex: none; }
+    .check label { margin: 0; font-weight: 500; }
+    .box {
+      border: 1px solid #dfe1e6;
+      border-radius: 3px;
+      max-height: 170px;
+      overflow-y: auto;
+      padding: 6px 8px;
+      margin-bottom: 10px;
+    }
+    .box .check:last-child { margin-bottom: 0; }
+    .empty { color: #5e6c84; font-size: 13px; padding: 4px 0; }
+    button {
+      background: #0079bf;
+      color: #fff;
+      border: 0;
+      border-radius: 3px;
+      padding: 9px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 12px;
+    }
+    button:hover { background: #026aa7; }
+  </style>
+</head>
+<body>
+
+  <h3>Color tiers</h3>
+  <div class="row">
+    <div>
+      <label for="warnAfter">Tier 2 after (days)</label>
+      <input id="warnAfter" type="number" min="0" step="1">
+    </div>
+    <div>
+      <label for="warnColor">Color</label>
+      <select id="warnColor"></select>
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label for="alertAfter">Tier 3 after (days)</label>
+      <input id="alertAfter" type="number" min="0" step="1">
+    </div>
+    <div>
+      <label for="alertColor">Color</label>
+      <select id="alertColor"></select>
+    </div>
+  </div>
+  <p class="hint">No badge is shown before tier 2. Set it to 1 to leave the first 24 hours unmarked.</p>
+
+  <h3>Lists where the counter pauses</h3>
+  <div id="listBox" class="box">
+    <div class="empty">Loading lists…</div>
+  </div>
+  <p class="hint">Select as many as you like. While a card sits in these lists no badge is shown and the days do not accrue. The counter resumes where it left off once the card moves out.</p>
+
+  <h3>Due dates</h3>
+  <div class="check">
+    <input id="dueMode" type="checkbox">
+    <label for="dueMode">Show remaining time when a due date is near</label>
+  </div>
+  <label for="dueWithin">Days before due</label>
+  <input id="dueWithin" type="number" min="0" step="1">
+  <p class="hint">Overdue cards switch to the tier 3 color.</p>
+
+  <h3>Counting</h3>
+  <div class="check">
+    <input id="useStartDate" type="checkbox">
+    <label for="useStartDate">Count from the start date when the card has one</label>
+  </div>
+  <div class="check">
+    <input id="countWeekends" type="checkbox">
+    <label for="countWeekends">Count weekends</label>
+  </div>
+  <p class="hint">When unchecked, Saturday and Sunday are skipped: a card opened on Friday reads 1 day on Monday.</p>
+  <label for="textFormat">Badge text</label>
+  <select id="textFormat">
+    <option value="short">Short — 3d</option>
+    <option value="long">Long — 3 days</option>
+    <option value="number">Number only — 3</option>
+  </select>
+
+  <h3>Just for me</h3>
+  <div class="check">
+    <input id="hidden" type="checkbox">
+    <label for="hidden">Hide badges on my screen</label>
+  </div>
+  <p class="hint">This switch affects only you; your teammates keep seeing the badges.</p>
+
+  <button id="save">Save</button>
+
+<script>
+var t = TrelloPowerUp.iframe();
+var P = TrelloPowerUp.Promise;
+
+var COLORS = [
+  ['yellow', 'Yellow'], ['orange', 'Orange'], ['red', 'Red'],
+  ['green', 'Green'], ['blue', 'Blue'], ['sky', 'Sky'],
+  ['lime', 'Lime'], ['purple', 'Purple'], ['pink', 'Pink'], ['light-gray', 'Gray']
+];
+
+var DEFAULTS = {
+  warnAfter: 3, alertAfter: 5, warnColor: 'yellow', alertColor: 'red',
+  dueMode: true, dueWithin: 2,
+  useStartDate: true, countWeekends: false, textFormat: 'short',
+  pausedListIds: []
+};
+
+function el(id) { return document.getElementById(id); }
+
+['warnColor', 'alertColor'].forEach(function (id) {
+  COLORS.forEach(function (c) {
+    var option = document.createElement('option');
+    option.value = c[0];
+    option.textContent = c[1];
+    el(id).appendChild(option);
+  });
+});
+
+function renderLists(lists, selected) {
+  var box = el('listBox');
+  box.innerHTML = '';
+  if (!lists.length) {
+    box.innerHTML = '<div class="empty">No lists found on this board.</div>';
+    return;
+  }
+  lists.forEach(function (list) {
+    var row = document.createElement('div');
+    row.className = 'check';
+
+    var input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = list.id;
+    input.id = 'list_' + list.id;
+    input.checked = selected.indexOf(list.id) !== -1;
+
+    var label = document.createElement('label');
+    label.setAttribute('for', input.id);
+    label.textContent = list.name;
+
+    row.appendChild(input);
+    row.appendChild(label);
+    box.appendChild(row);
+  });
+}
+
+P.all([
+  t.get('board', 'shared', 'cardAgeSettings'),
+  t.get('member', 'private', 'cardAgeHidden'),
+  t.lists('id', 'name')
+]).then(function (res) {
+  var s = {};
+  for (var k in DEFAULTS) s[k] = DEFAULTS[k];
+  if (res[0]) for (var k2 in res[0]) s[k2] = res[0][k2];
+  if (!Array.isArray(s.pausedListIds)) s.pausedListIds = [];
+
+  el('warnAfter').value = s.warnAfter;
+  el('alertAfter').value = s.alertAfter;
+  el('warnColor').value = s.warnColor;
+  el('alertColor').value = s.alertColor;
+  el('dueMode').checked = !!s.dueMode;
+  el('dueWithin').value = s.dueWithin;
+  el('useStartDate').checked = !!s.useStartDate;
+  el('countWeekends').checked = !!s.countWeekends;
+  el('textFormat').value = s.textFormat;
+  el('hidden').checked = !!res[1];
+
+  renderLists(res[2] || [], s.pausedListIds);
+}).catch(function () {
+  el('listBox').innerHTML = '<div class="empty">Could not load lists. Close this popup and open it again.</div>';
+});
+
+el('save').addEventListener('click', function () {
+  var warnAfter = Number(el('warnAfter').value);
+  var alertAfter = Number(el('alertAfter').value);
+  var dueWithin = Number(el('dueWithin').value);
+  if (isNaN(warnAfter) || warnAfter < 0) warnAfter = 3;
+  if (isNaN(alertAfter) || alertAfter < warnAfter) alertAfter = warnAfter;
+  if (isNaN(dueWithin) || dueWithin < 0) dueWithin = 2;
+
+  var selected = Array.prototype.slice
+    .call(el('listBox').querySelectorAll('input[type=checkbox]'))
+    .filter(function (input) { return input.checked; })
+    .map(function (input) { return input.value; });
+
+  P.all([
+    t.set('board', 'shared', 'cardAgeSettings', {
+      warnAfter: warnAfter,
+      alertAfter: alertAfter,
+      warnColor: el('warnColor').value,
+      alertColor: el('alertColor').value,
+      dueMode: el('dueMode').checked,
+      dueWithin: dueWithin,
+      useStartDate: el('useStartDate').checked,
+      countWeekends: el('countWeekends').checked,
+      textFormat: el('textFormat').value,
+      pausedListIds: selected
+    }),
+    t.set('member', 'private', 'cardAgeHidden', el('hidden').checked)
+  ]).then(function () { return t.closePopup(); });
+});
+</script>
+</body>
+</html>

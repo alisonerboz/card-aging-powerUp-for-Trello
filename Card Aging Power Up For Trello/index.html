@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Card Age Badge</title>
+  <script src="https://p.trellocdn.com/power-up.min.js"></script>
+</head>
+<body>
+<script>
+var P = TrelloPowerUp.Promise;
+var DAY_MS = 86400000;
+
+/* ─────────────────────────── SETTINGS ─────────────────────────── */
+
+var DEFAULTS = {
+  warnAfter: 3,             // tier 2 starts at this many days
+  alertAfter: 5,            // tier 3 starts at this many days
+  warnColor: 'yellow',
+  alertColor: 'red',
+
+  dueMode: true,            // show remaining time instead of age when due is near
+  dueWithin: 2,             // "near" means this many days or fewer
+
+  useStartDate: true,       // if the card has a start date, count from it
+  countWeekends: false,     // false = Saturday and Sunday are skipped
+  textFormat: 'short',      // 'long' | 'short' | 'number'
+
+  pausedListIds: []         // counter stops and badge hides in these lists
+};
+
+function getSettings(t) {
+  return P.all([
+    t.get('board', 'shared', 'cardAgeSettings'),
+    t.get('member', 'private', 'cardAgeHidden')
+  ]).then(function (res) {
+    var s = {};
+    for (var k in DEFAULTS) s[k] = DEFAULTS[k];
+    if (res[0]) for (var k2 in res[0]) s[k2] = res[0][k2];
+    if (!Array.isArray(s.pausedListIds)) s.pausedListIds = [];
+    if (Number(s.alertAfter) < Number(s.warnAfter)) s.alertAfter = s.warnAfter;
+    s.hiddenForMe = !!res[1];
+    return s;
+  });
+}
+
+/* ─────────────────────────── DATES ─────────────────────────── */
+
+/* The first 8 characters of a Trello card ID encode its creation time in seconds */
+function creationDate(cardId) {
+  return new Date(parseInt(cardId.substring(0, 8), 16) * 1000);
+}
+
+function midnight(date) {
+  var d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/* Whole days between two dates; skips Saturday and Sunday unless countWeekends */
+function daysBetween(from, to, countWeekends) {
+  var start = midnight(from), end = midnight(to);
+  var total = Math.round((end - start) / DAY_MS);
+  if (total <= 0) return 0;
+  if (countWeekends) return total;
+
+  var count = 0, cursor = new Date(start);
+  for (var i = 0; i < total && i < 5000; i++) {
+    cursor.setDate(cursor.getDate() + 1);
+    var day = cursor.getDay();
+    if (day !== 0 && day !== 6) count++;
+  }
+  return count;
+}
+
+/* Where the counter starts for a card the Power-Up has never seen before */
+function initialStart(card, settings) {
+  if (settings.useStartDate && card.start) {
+    var s = new Date(card.start);
+    if (!isNaN(s.getTime())) return s;
+  }
+  return creationDate(card.id);
+}
+
+function formatDate(date) {
+  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/* ─────────────────────────── TEXT ─────────────────────────── */
+
+function ageText(days, format) {
+  if (format === 'long') return days + (days === 1 ? ' day' : ' days');
+  if (format === 'number') return String(days);
+  return days + 'd';
+}
+
+function dueText(remaining, format) {
+  if (remaining === 0) return format === 'long' ? 'due today' : 'today';
+  if (remaining > 0) {
+    return format === 'long'
+      ? remaining + (remaining === 1 ? ' day left' : ' days left')
+      : remaining + 'd left';
+  }
+  var over = -remaining;
+  return format === 'long'
+    ? over + (over === 1 ? ' day overdue' : ' days overdue')
+    : over + 'd over';
+}
+
+/*
+  ─────────────────────────── COUNTER ───────────────────────────
+
+  Per-card stored shape:
+    { accrued: <completed active days>, activeSince: <ISO string|null> }
+
+  In a paused list  → the open segment is closed and added to `accrued`
+  In an active list → `activeSince` is opened if it is not already
+  Marked complete   → the counter freezes at its current value
+*/
+function computeCounter(card, listId, settings, record) {
+  var now = new Date();
+  var paused = settings.pausedListIds.indexOf(listId) !== -1;
+  var complete = !!card.dueComplete;
+
+  var accrued = (record && typeof record.accrued === 'number') ? record.accrued : null;
+  var activeSince = (record && record.activeSince) ? new Date(record.activeSince) : null;
+  var firstSighting = (accrued === null && !activeSince);
+  var nextRecord = null;   // only written when the stored state actually changes
+
+  if (accrued === null) accrued = 0;
+
+  if (complete || paused) {
+    if (activeSince) {
+      accrued += daysBetween(activeSince, now, settings.countWeekends);
+      nextRecord = { accrued: accrued, activeSince: null };
+    } else if (firstSighting) {
+      nextRecord = { accrued: 0, activeSince: null };
+    }
+    return { age: accrued, paused: paused, complete: complete, nextRecord: nextRecord };
+  }
+
+  if (!activeSince) {
+    activeSince = firstSighting ? initialStart(card, settings) : now;
+    nextRecord = { accrued: accrued, activeSince: activeSince.toISOString() };
+  }
+
+  return {
+    age: accrued + daysBetween(activeSince, now, settings.countWeekends),
+    paused: false,
+    complete: false,
+    nextRecord: nextRecord
+  };
+}
+
+function computeDue(card, settings) {
+  if (!settings.dueMode || !card.due) return null;
+  var due = new Date(card.due);
+  if (isNaN(due.getTime())) return null;
+  return { date: due, remaining: Math.round((midnight(due) - midnight(new Date())) / DAY_MS) };
+}
+
+function tierFor(age, settings) {
+  if (age >= Number(settings.alertAfter)) return 2;
+  if (age >= Number(settings.warnAfter)) return 1;
+  return 0;
+}
+
+/* ─────────────────────────── CORE ─────────────────────────── */
+
+function collectState(t) {
+  return P.all([
+    getSettings(t),
+    t.card('id', 'due', 'dueComplete', 'start'),
+    t.list('id'),
+    t.get('card', 'shared', 'cardAgeCounter')
+  ]).then(function (res) {
+    var settings = res[0], card = res[1], list = res[2], record = res[3];
+    var counter = computeCounter(card, list.id, settings, record);
+
+    if (counter.nextRecord) t.set('card', 'shared', 'cardAgeCounter', counter.nextRecord);
+
+    return {
+      settings: settings,
+      age: counter.age,
+      paused: counter.paused,
+      complete: counter.complete,
+      tier: tierFor(counter.age, settings),
+      due: computeDue(card, settings),
+      created: creationDate(card.id)
+    };
+  });
+}
+
+function frontBadgeFor(state) {
+  var s = state.settings;
+  if (state.complete || state.paused) return null;
+
+  if (state.due && state.due.remaining <= Number(s.dueWithin)) {
+    return {
+      text: dueText(state.due.remaining, s.textFormat),
+      color: state.due.remaining <= 0 ? s.alertColor : s.warnColor
+    };
+  }
+
+  if (state.tier === 0) return null;
+  return {
+    text: ageText(state.age, s.textFormat),
+    color: state.tier === 2 ? s.alertColor : s.warnColor
+  };
+}
+
+/* ─────────────────────────── CAPABILITIES ─────────────────────────── */
+
+function cardBadges(t) {
+  return getSettings(t).then(function (settings) {
+    if (settings.hiddenForMe) return [];
+    return [{
+      dynamic: function (t2) {
+        return collectState(t2).then(function (state) {
+          var badge = frontBadgeFor(state);
+          if (!badge) return { text: '', refresh: 3600 };
+          badge.refresh = 3600;   // re-evaluates hourly while the board is open
+          return badge;
+        }).catch(function () { return { text: '', refresh: 3600 }; });
+      }
+    }];
+  });
+}
+
+function cardDetailBadges(t) {
+  return collectState(t).then(function (state) {
+    var s = state.settings;
+    var badges = [{ title: 'Created', text: formatDate(state.created), color: 'light-gray' }];
+
+    if (state.complete) {
+      badges.push({
+        title: 'Time to complete',
+        text: state.age + (state.age === 1 ? ' day' : ' days'),
+        color: 'green'
+      });
+      return badges;
+    }
+
+    if (state.paused) {
+      badges.push({
+        title: 'Counter',
+        text: 'paused — ' + state.age + (state.age === 1 ? ' day' : ' days') + ' accrued',
+        color: 'light-gray'
+      });
+      return badges;
+    }
+
+    var color = state.tier === 2 ? s.alertColor : state.tier === 1 ? s.warnColor : 'light-gray';
+    badges.push({
+      title: 'Open for',
+      text: state.age + (state.age === 1 ? ' day' : ' days'),
+      color: color
+    });
+
+    if (state.tier === 0) {
+      var toWarn = Number(s.warnAfter) - state.age;
+      badges.push({ title: 'Next tier in', text: toWarn + (toWarn === 1 ? ' day' : ' days'), color: 'light-gray' });
+    } else if (state.tier === 1) {
+      var toAlert = Number(s.alertAfter) - state.age;
+      badges.push({ title: 'Next tier in', text: toAlert + (toAlert === 1 ? ' day' : ' days'), color: 'light-gray' });
+    }
+
+    if (state.due) {
+      badges.push({
+        title: 'Due',
+        text: dueText(state.due.remaining, 'long'),
+        color: state.due.remaining <= 0 ? s.alertColor
+             : state.due.remaining <= Number(s.dueWithin) ? s.warnColor : 'light-gray'
+      });
+    }
+    return badges;
+  }).catch(function () { return []; });
+}
+
+/*
+  Sorters receive every card in the list at once, but not the per-card records
+  this Power-Up stores. Sorting therefore uses raw age (start or creation date)
+  without the pause adjustment. The badge value remains the authoritative one.
+*/
+function rawAge(card, settings) {
+  return daysBetween(initialStart(card, settings), new Date(), settings.countWeekends);
+}
+
+function listSorters(t) {
+  function prepare(t2, opts) {
+    return getSettings(t2).then(function (settings) {
+      return (opts.cards || []).map(function (card) {
+        var age = rawAge(card, settings);
+        var due = computeDue(card, settings);
+        return {
+          id: card.id,
+          age: age,
+          remaining: due ? due.remaining : Infinity,
+          tier: tierFor(age, settings)
+        };
+      });
+    });
+  }
+  function toIds(rows) {
+    return { sortedIds: rows.map(function (r) { return r.id; }) };
+  }
+
+  return [
+    {
+      text: 'Age (oldest first)',
+      callback: function (t2, opts) {
+        return prepare(t2, opts).then(function (rows) {
+          rows.sort(function (a, b) { return b.age - a.age; });
+          return toIds(rows);
+        });
+      }
+    },
+    {
+      text: 'Due date (most urgent first)',
+      callback: function (t2, opts) {
+        return prepare(t2, opts).then(function (rows) {
+          rows.sort(function (a, b) {
+            if (a.remaining !== b.remaining) return a.remaining - b.remaining;
+            return b.age - a.age;
+          });
+          return toIds(rows);
+        });
+      }
+    },
+    {
+      text: 'Tier (most urgent first)',
+      callback: function (t2, opts) {
+        return prepare(t2, opts).then(function (rows) {
+          rows.sort(function (a, b) {
+            if (b.tier !== a.tier) return b.tier - a.tier;
+            return b.age - a.age;
+          });
+          return toIds(rows);
+        });
+      }
+    }
+  ];
+}
+
+TrelloPowerUp.initialize({
+  'card-badges': cardBadges,
+  'card-detail-badges': cardDetailBadges,
+  'list-sorters': listSorters,
+  'show-settings': function (t) {
+    return t.popup({ title: 'Card Age Badge — Settings', url: './settings.html', height: 560 });
+  }
+});
+</script>
+</body>
+</html>
