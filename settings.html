@@ -37,22 +37,48 @@
       color: inherit;
     }
     input:focus, select:focus { outline: none; border-color: #0079bf; }
-    .row { display: flex; gap: 8px; }
-    .row > div { flex: 1; }
     .hint { color: #5e6c84; font-size: 12px; margin: -6px 0 10px; line-height: 1.4; }
     .check { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
     .check input { margin: 0; flex: none; }
     .check label { margin: 0; font-weight: 500; }
+
+    /* Tier row: threshold on the left, color swatches on the right */
+    .tier {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid #f4f5f7;
+    }
+    .tier:last-of-type { border-bottom: 0; }
+    .tier .name { width: 52px; font-weight: 600; flex: none; }
+    .tier .after { color: #5e6c84; font-size: 12px; flex: none; }
+    .tier input[type=number] { width: 56px; margin: 0; padding: 5px 6px; flex: none; }
+    .swatches { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+    .swatch {
+      width: 20px; height: 20px;
+      border-radius: 3px;
+      border: 2px solid transparent;
+      cursor: pointer;
+      box-shadow: inset 0 0 0 1px rgba(9,30,66,.12);
+    }
+    .swatch[data-selected="1"] {
+      border-color: #172b4d;
+      box-shadow: inset 0 0 0 1px #fff;
+    }
+
     .box {
       border: 1px solid #dfe1e6;
       border-radius: 3px;
-      max-height: 170px;
+      max-height: 150px;
       overflow-y: auto;
       padding: 6px 8px;
       margin-bottom: 10px;
     }
     .box .check:last-child { margin-bottom: 0; }
     .empty { color: #5e6c84; font-size: 13px; padding: 4px 0; }
+    .off { opacity: .4; pointer-events: none; }
+
     button {
       background: #0079bf;
       color: #fff;
@@ -70,33 +96,52 @@
 <body>
 
   <h3>Color tiers</h3>
-  <div class="row">
-    <div>
-      <label for="warnAfter">Tier 2 after (days)</label>
-      <input id="warnAfter" type="number" min="0" step="1">
-    </div>
-    <div>
-      <label for="warnColor">Color</label>
-      <select id="warnColor"></select>
-    </div>
+  <div class="tier">
+    <span class="name">Tier 1</span>
+    <span class="after">from</span>
+    <input id="tier1After" type="number" min="0" step="1">
+    <span class="after">days</span>
+    <div class="swatches" data-target="tier1Color"></div>
   </div>
-  <div class="row">
-    <div>
-      <label for="alertAfter">Tier 3 after (days)</label>
-      <input id="alertAfter" type="number" min="0" step="1">
-    </div>
-    <div>
-      <label for="alertColor">Color</label>
-      <select id="alertColor"></select>
-    </div>
+  <div class="tier">
+    <span class="name">Tier 2</span>
+    <span class="after">from</span>
+    <input id="tier2After" type="number" min="0" step="1">
+    <span class="after">days</span>
+    <div class="swatches" data-target="tier2Color"></div>
   </div>
-  <p class="hint">No badge is shown before tier 2. Set it to 1 to leave the first 24 hours unmarked.</p>
+  <div class="tier">
+    <span class="name">Tier 3</span>
+    <span class="after">from</span>
+    <input id="tier3After" type="number" min="0" step="1">
+    <span class="after">days</span>
+    <div class="swatches" data-target="tier3Color"></div>
+  </div>
+  <p class="hint">Cards younger than tier 1 carry no badge at all. Thresholds are kept in ascending order when you save.</p>
 
   <h3>Lists where the counter pauses</h3>
-  <div id="listBox" class="box">
-    <div class="empty">Loading lists…</div>
+  <div id="pausedBox" class="box"><div class="empty">Loading lists…</div></div>
+  <p class="hint">While a card sits in these lists no badge is shown and the days do not accrue. The counter resumes where it left off once the card moves out.</p>
+
+  <h3>Archive countdown</h3>
+  <div class="check">
+    <input id="archiveEnabled" type="checkbox">
+    <label for="archiveEnabled">Show how long until a card is archived</label>
   </div>
-  <p class="hint">Select as many as you like. While a card sits in these lists no badge is shown and the days do not accrue. The counter resumes where it left off once the card moves out.</p>
+  <p class="hint">This Power-Up does not archive anything. It mirrors your Butler rule so the deadline is visible in advance — keep the number below in sync with that rule.</p>
+  <div id="archiveFields">
+    <label>Lists the Butler rule watches</label>
+    <div id="archiveBox" class="box"><div class="empty">Loading lists…</div></div>
+    <div class="check">
+      <input id="archiveRequiresComplete" type="checkbox">
+      <label for="archiveRequiresComplete">Only count cards marked complete</label>
+    </div>
+    <label for="archiveAfter">Archived after (calendar days)</label>
+    <input id="archiveAfter" type="number" min="1" step="1">
+    <label for="archiveWarnWithin">Show the badge on the card front within (days)</label>
+    <input id="archiveWarnWithin" type="number" min="0" step="1">
+    <p class="hint">Before that, the countdown appears only on the card back. Weekends always count here, because Butler counts them too.</p>
+  </div>
 
   <h3>Due dates</h3>
   <div class="check">
@@ -105,7 +150,6 @@
   </div>
   <label for="dueWithin">Days before due</label>
   <input id="dueWithin" type="number" min="0" step="1">
-  <p class="hint">Overdue cards switch to the tier 3 color.</p>
 
   <h3>Counting</h3>
   <div class="check">
@@ -137,32 +181,60 @@
 var t = TrelloPowerUp.iframe();
 var P = TrelloPowerUp.Promise;
 
+/* Trello badge colors with their approximate hex values, for the swatches */
 var COLORS = [
-  ['yellow', 'Yellow'], ['orange', 'Orange'], ['red', 'Red'],
-  ['green', 'Green'], ['blue', 'Blue'], ['sky', 'Sky'],
-  ['lime', 'Lime'], ['purple', 'Purple'], ['pink', 'Pink'], ['light-gray', 'Gray']
+  ['blue', '#579DFF'], ['sky', '#6CC3E0'], ['lime', '#94C748'],
+  ['green', '#4BCE97'], ['yellow', '#F5CD47'], ['orange', '#FEA362'],
+  ['red', '#F87168'], ['purple', '#9F8FEF'], ['pink', '#E774BB'],
+  ['light-gray', '#B3BAC5']
 ];
 
 var DEFAULTS = {
-  warnAfter: 3, alertAfter: 5, warnColor: 'yellow', alertColor: 'red',
+  tier1After: 1, tier1Color: 'blue',
+  tier2After: 2, tier2Color: 'orange',
+  tier3After: 4, tier3Color: 'red',
+  pausedListIds: [],
+  archiveEnabled: true, archiveListIds: [], archiveRequiresComplete: true,
+  archiveAfter: 7, archiveWarnWithin: 2,
   dueMode: true, dueWithin: 2,
-  useStartDate: true, countWeekends: false, textFormat: 'short',
-  pausedListIds: []
+  useStartDate: true, countWeekends: false, textFormat: 'short'
 };
 
 function el(id) { return document.getElementById(id); }
 
-['warnColor', 'alertColor'].forEach(function (id) {
+/* Build the swatch rows and wire up selection */
+Array.prototype.slice.call(document.querySelectorAll('.swatches')).forEach(function (row) {
   COLORS.forEach(function (c) {
-    var option = document.createElement('option');
-    option.value = c[0];
-    option.textContent = c[1];
-    el(id).appendChild(option);
+    var swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.background = c[1];
+    swatch.dataset.value = c[0];
+    swatch.title = c[0];
+    swatch.addEventListener('click', function () {
+      Array.prototype.slice.call(row.children).forEach(function (other) {
+        other.dataset.selected = '0';
+      });
+      swatch.dataset.selected = '1';
+    });
+    row.appendChild(swatch);
   });
 });
 
-function renderLists(lists, selected) {
-  var box = el('listBox');
+function setSwatch(target, value) {
+  var row = document.querySelector('.swatches[data-target="' + target + '"]');
+  Array.prototype.slice.call(row.children).forEach(function (swatch) {
+    swatch.dataset.selected = (swatch.dataset.value === value) ? '1' : '0';
+  });
+}
+
+function getSwatch(target, fallback) {
+  var row = document.querySelector('.swatches[data-target="' + target + '"]');
+  var chosen = row.querySelector('.swatch[data-selected="1"]');
+  return chosen ? chosen.dataset.value : fallback;
+}
+
+function renderLists(boxId, lists, selected) {
+  var box = el(boxId);
   box.innerHTML = '';
   if (!lists.length) {
     box.innerHTML = '<div class="empty">No lists found on this board.</div>';
@@ -175,7 +247,7 @@ function renderLists(lists, selected) {
     var input = document.createElement('input');
     input.type = 'checkbox';
     input.value = list.id;
-    input.id = 'list_' + list.id;
+    input.id = boxId + '_' + list.id;
     input.checked = selected.indexOf(list.id) !== -1;
 
     var label = document.createElement('label');
@@ -188,6 +260,11 @@ function renderLists(lists, selected) {
   });
 }
 
+function refreshDisabled() {
+  el('archiveFields').classList.toggle('off', !el('archiveEnabled').checked);
+}
+el('archiveEnabled').addEventListener('change', refreshDisabled);
+
 P.all([
   t.get('board', 'shared', 'cardAgeSettings'),
   t.get('member', 'private', 'cardAgeHidden'),
@@ -197,11 +274,20 @@ P.all([
   for (var k in DEFAULTS) s[k] = DEFAULTS[k];
   if (res[0]) for (var k2 in res[0]) s[k2] = res[0][k2];
   if (!Array.isArray(s.pausedListIds)) s.pausedListIds = [];
+  if (!Array.isArray(s.archiveListIds)) s.archiveListIds = [];
 
-  el('warnAfter').value = s.warnAfter;
-  el('alertAfter').value = s.alertAfter;
-  el('warnColor').value = s.warnColor;
-  el('alertColor').value = s.alertColor;
+  el('tier1After').value = s.tier1After;
+  el('tier2After').value = s.tier2After;
+  el('tier3After').value = s.tier3After;
+  setSwatch('tier1Color', s.tier1Color);
+  setSwatch('tier2Color', s.tier2Color);
+  setSwatch('tier3Color', s.tier3Color);
+
+  el('archiveEnabled').checked = !!s.archiveEnabled;
+  el('archiveRequiresComplete').checked = !!s.archiveRequiresComplete;
+  el('archiveAfter').value = s.archiveAfter;
+  el('archiveWarnWithin').value = s.archiveWarnWithin;
+
   el('dueMode').checked = !!s.dueMode;
   el('dueWithin').value = s.dueWithin;
   el('useStartDate').checked = !!s.useStartDate;
@@ -209,36 +295,51 @@ P.all([
   el('textFormat').value = s.textFormat;
   el('hidden').checked = !!res[1];
 
-  renderLists(res[2] || [], s.pausedListIds);
+  var lists = res[2] || [];
+  renderLists('pausedBox', lists, s.pausedListIds);
+  renderLists('archiveBox', lists, s.archiveListIds);
+  refreshDisabled();
 }).catch(function () {
-  el('listBox').innerHTML = '<div class="empty">Could not load lists. Close this popup and open it again.</div>';
+  el('pausedBox').innerHTML = '<div class="empty">Could not load lists. Close this popup and open it again.</div>';
+  el('archiveBox').innerHTML = '<div class="empty">Could not load lists.</div>';
 });
 
-el('save').addEventListener('click', function () {
-  var warnAfter = Number(el('warnAfter').value);
-  var alertAfter = Number(el('alertAfter').value);
-  var dueWithin = Number(el('dueWithin').value);
-  if (isNaN(warnAfter) || warnAfter < 0) warnAfter = 3;
-  if (isNaN(alertAfter) || alertAfter < warnAfter) alertAfter = warnAfter;
-  if (isNaN(dueWithin) || dueWithin < 0) dueWithin = 2;
-
-  var selected = Array.prototype.slice
-    .call(el('listBox').querySelectorAll('input[type=checkbox]'))
+function selectedIds(boxId) {
+  return Array.prototype.slice
+    .call(el(boxId).querySelectorAll('input[type=checkbox]'))
     .filter(function (input) { return input.checked; })
     .map(function (input) { return input.value; });
+}
+
+function num(id, fallback, min) {
+  var value = Number(el(id).value);
+  if (isNaN(value) || value < (min === undefined ? 0 : min)) return fallback;
+  return value;
+}
+
+el('save').addEventListener('click', function () {
+  var t1 = num('tier1After', 1);
+  var t2 = num('tier2After', 2);
+  var t3 = num('tier3After', 4);
+  if (t2 < t1) t2 = t1;
+  if (t3 < t2) t3 = t2;
 
   P.all([
     t.set('board', 'shared', 'cardAgeSettings', {
-      warnAfter: warnAfter,
-      alertAfter: alertAfter,
-      warnColor: el('warnColor').value,
-      alertColor: el('alertColor').value,
+      tier1After: t1, tier1Color: getSwatch('tier1Color', 'blue'),
+      tier2After: t2, tier2Color: getSwatch('tier2Color', 'orange'),
+      tier3After: t3, tier3Color: getSwatch('tier3Color', 'red'),
+      pausedListIds: selectedIds('pausedBox'),
+      archiveEnabled: el('archiveEnabled').checked,
+      archiveListIds: selectedIds('archiveBox'),
+      archiveRequiresComplete: el('archiveRequiresComplete').checked,
+      archiveAfter: num('archiveAfter', 7, 1),
+      archiveWarnWithin: num('archiveWarnWithin', 2),
       dueMode: el('dueMode').checked,
-      dueWithin: dueWithin,
+      dueWithin: num('dueWithin', 2),
       useStartDate: el('useStartDate').checked,
       countWeekends: el('countWeekends').checked,
-      textFormat: el('textFormat').value,
-      pausedListIds: selected
+      textFormat: el('textFormat').value
     }),
     t.set('member', 'private', 'cardAgeHidden', el('hidden').checked)
   ]).then(function () { return t.closePopup(); });
